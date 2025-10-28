@@ -39,18 +39,49 @@ func (h *CorefileHandler) validateCorefile(content string) error {
 	}
 	defer os.Remove(tmpFile)
 
-	// 使用 coredns -conf <file> -plugins 验证配置文件
-	cmd := exec.Command(h.CorednsPath, "-conf", tmpFile, "-plugins")
-	output, err := cmd.CombinedOutput()
+	// 使用 timeout + coredns 验证配置
+	// 正确的配置：coredns 会启动，timeout 1秒后退出，返回码 124
+	// 错误的配置：coredns 启动失败，立即退出，返回码 1
+	logFile := "/tmp/coredns_check.log"
+	cmd := exec.Command("timeout", "1s", h.CorednsPath, "-conf", tmpFile, "-dns.port", "0")
 
-	// 如果命令执行失败，检查输出中是否有错误信息
+	// 重定向输出到日志文件
+	logF, err := os.Create(logFile)
 	if err != nil {
-		outputStr := string(output)
-		if strings.Contains(outputStr, "Error") || strings.Contains(outputStr, "error") {
-			return fmt.Errorf("配置验证失败: %s", outputStr)
+		return fmt.Errorf("无法创建日志文件: %v", err)
+	}
+	defer logF.Close()
+	defer os.Remove(logFile)
+
+	cmd.Stdout = logF
+	cmd.Stderr = logF
+
+	err = cmd.Run()
+
+	// 读取日志内容
+	logContent, _ := os.ReadFile(logFile)
+	logStr := string(logContent)
+
+	if err != nil {
+		// 检查退出码
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode := exitError.ExitCode()
+
+			// 124 表示 timeout 正常退出（配置正确，coredns 启动成功）
+			if exitCode == 124 {
+				return nil
+			}
+
+			// 其他退出码表示配置错误
+			if logStr != "" {
+				return fmt.Errorf("配置验证失败:\n%s", logStr)
+			}
+			return fmt.Errorf("配置验证失败，退出码: %d", exitCode)
 		}
+		return fmt.Errorf("验证命令执行失败: %v", err)
 	}
 
+	// 如果没有错误，说明配置正确
 	return nil
 }
 
