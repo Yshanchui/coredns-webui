@@ -43,7 +43,9 @@ func (h *CorefileHandler) validateCorefile(content string) error {
 	// 正确的配置：coredns 会启动，timeout 1秒后退出，返回码 124
 	// 错误的配置：coredns 启动失败，立即退出，返回码 1
 	logFile := "/tmp/coredns_check.log"
-	cmd := exec.Command("timeout", "1s", h.CorednsPath, "-conf", tmpFile, "-dns.port", "0")
+	// We use the full CorednsPath or just "coredns" if in path. 
+	// In Dockerfile we put it at /usr/local/bin/coredns
+	cmd := exec.Command("timeout", "1s", "coredns", "-conf", tmpFile, "-dns.port", "1053")
 
 	// 重定向输出到日志文件
 	logF, err := os.Create(logFile)
@@ -160,12 +162,8 @@ func (h *CorefileHandler) UpdateCorefile(c *gin.Context) {
 }
 
 func (h *CorefileHandler) restartCoreDNS() error {
-	// 使用 systemctl restart 重启服务
-	cmd := exec.Command("systemctl", "restart", "coredns")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("重启失败: %v, 输出: %s", err, string(output))
-	}
+	// In Docker with shared volume and 'reload' plugin, CoreDNS reloads automatically.
+	// No action needed here.
 	return nil
 }
 

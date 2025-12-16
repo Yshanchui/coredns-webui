@@ -1,0 +1,32 @@
+version: '3'
+
+services:
+  coredns:
+    image: coredns/coredns:latest
+    container_name: coredns
+    restart: always
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "9153:9153"
+    volumes:
+      - ./config:/etc/coredns
+    command: -conf /etc/coredns/Corefile
+
+  webui:
+    build: .
+    container_name: coredns-webui
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=80
+      - COREFILE_PATH=/etc/coredns/Corefile
+      - COREDNS_PATH=/app/coredns # Not used in docker mode but kept for safe measures
+      - AUTH_USER=admin
+      - AUTH_PASS=admin
+    volumes:
+      - ./config:/etc/coredns
+    depends_on:
+      - coredns
