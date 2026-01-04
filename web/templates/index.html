@@ -216,9 +216,12 @@
             <div class="card">
                 <div class="card-header">
                     <span class="card-title">运行状态 (Metrics)</span>
-                    <button class="btn btn-primary" style="font-size: 0.8rem;" @click="fetchMetrics">刷新</button>
+                    <button class="btn btn-primary" style="font-size: 0.8rem;" @click="fetchMetrics"
+                        :disabled="metricsLoading">
+                        [[ metricsLoading ? '...' : '刷新' ]]
+                    </button>
                 </div>
-                <div v-if="metricsLoading" style="color: var(--text-muted)">加载中...</div>
+                <!-- Removed v-if/else to prevent layout jitter -->
                 <div class="metric-item">
                     <span class="metric-label">查询速率 (QPS)</span>
                     <span class="metric-value">[[ metrics.qps || 0 ]] /s</span>
@@ -316,6 +319,11 @@
                     setInterval(() => {
                         currentTime.value = new Date().toLocaleTimeString()
                     }, 1000)
+
+                    // Auto Refresh Metrics (5s)
+                    setInterval(() => {
+                        fetchMetrics()
+                    }, 5000)
                 })
 
                 const fetchMetrics = async () => {
@@ -340,36 +348,54 @@
 
                 const parseMetrics = (text) => {
                     const getVal = (name) => {
-                        const re = new RegExp(`^${name}.*?\\s+([0-9\\.e\\+\\-]+)$`, 'm')
+                        const re = new RegExp(`^${name}(?:\\{.*?\\})?\\s+([0-9\\.e\\+\\-]+)\\s*$`, 'm')
                         const m = text.match(re)
                         return m ? parseFloat(m[1]) : 0
                     }
 
                     const getSum = (regex) => {
+                        // Use matchAll or iterate over global matches
                         const matches = text.match(regex)
                         let total = 0
                         if (matches) {
                             matches.forEach(line => {
-                                const parts = line.split(' ')
-                                total += parseFloat(parts[parts.length - 1])
+                                // Extract the last number after space at end of line
+                                const parts = line.trim().split(' ')
+                                const val = parseFloat(parts[parts.length - 1])
+                                if (!isNaN(val)) {
+                                    total += val
+                                }
                             })
                         }
                         return total
                     }
 
-                    // coredns_dns_request_count_total{family="1",proto="udp",server="dns://:53",zone="."} 123
-                    const totalQueries = getSum(/coredns_dns_request_count_total.*? ([0-9]+)/g)
+                    // Detect metric name (coredns_dns_requests_total vs coredns_dns_request_count_total)
+                    const metricName = text.includes('coredns_dns_requests_total')
+                        ? 'coredns_dns_requests_total'
+                        : 'coredns_dns_request_count_total'
+
+                    // Regex explanation:
+                    // ^${metricName}   : Start of line match metric name
+                    // .*?              : Non-greedy match for labels
+                    // \s+              : Space separator
+                    // ([0-9\.e\+\-]+)  : Value (int/float/scientific)
+                    // \s*              : Optional trailing whitespace (handles \r)
+                    // $                : End of line
+                    // gm               : Global + Multiline flags
+
+                    // coredns_dns_requests_total{family="1",proto="udp",server="dns://:53",zone="."} 123
+                    const totalQueries = Math.floor(getSum(new RegExp(`^${metricName}.*?\\s+([0-9\\.e\\+\\-]+)\\s*$`, 'gm')))
                     const totalErrors = 0 // Needs rcode parsing detail
 
                     // Protocols
-                    // coredns_dns_request_count_total{...proto="udp"...}
-                    const protoUdp = getSum(/coredns_dns_request_count_total.*proto="udp".*? ([0-9]+)/g)
-                    const protoTcp = getSum(/coredns_dns_request_count_total.*proto="tcp".*? ([0-9]+)/g)
+                    const protoUdp = Math.floor(getSum(new RegExp(`^${metricName}.*proto="udp".*?\\s+([0-9\\.e\\+\\-]+)\\s*$`, 'gm')))
+                    const protoTcp = Math.floor(getSum(new RegExp(`^${metricName}.*proto="tcp".*?\\s+([0-9\\.e\\+\\-]+)\\s*$`, 'gm')))
 
                     // Family
                     // family="1" (IPv4), family="2" (IPv6)
-                    const familyV4 = getSum(/coredns_dns_request_count_total.*family="1".*? ([0-9]+)/g)
-                    const familyV6 = getSum(/coredns_dns_request_count_total.*family="2".*? ([0-9]+)/g)
+                    const familyV4 = Math.floor(getSum(new RegExp(`^${metricName}.*family="1".*?\\s+([0-9\\.e\\+\\-]+)\\s*$`, 'gm')))
+                    const familyV6 = Math.floor(getSum(new RegExp(`^${metricName}.*family="2".*?\\s+([0-9\\.e\\+\\-]+)\\s*$`, 'gm')))
 
                     const goWait = getVal('go_goroutines')
                     const mem = getVal('go_memstats_alloc_bytes')
